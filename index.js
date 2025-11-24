@@ -72,6 +72,11 @@ async function check() {
         
         const apiContentString = typeof apiData === 'object' ? JSON.stringify(apiData) : apiData;
 
+        // ТИМЧАСОВЕ ВИВЕДЕННЯ ВМІСТУ ДЛЯ НАЛАГОДЖЕННЯ:
+        console.log('--- Отримано JSON ---');
+        console.log(apiContentString);
+        console.log('--------------------');
+
         if (apiContentString.length < 50) { 
              await sendTextToTelegram('⚠️ Отримано занадто коротку відповідь API. Можливо, сайт недоступний.');
              return;
