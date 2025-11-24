@@ -1,23 +1,26 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
 const fs = require('fs');
 const crypto = require('crypto');
-const path = require('path');
 
-// Налаштування
+// --- НАЛАШТУВАННЯ ---
 const STATE_FILE = 'state.json';
-const URL_PAGE = 'https://poweron.loe.lviv.ua/';
+// ВИКОРИСТОВУЄМО АДРЕСУ, ЯКА ПОВЕРТАЄ ПОСИЛАННЯ НА КАРТИНКУ
+const API_URL = 'https://api.loe.lviv.ua/api/menus?page=1&type=photo-grafic'; 
+const BASE_URL = 'https://poweron.loe.lviv.ua/'; 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// Завантаження стану
+// --- ДОПОМІЖНІ ФУНКЦІЇ ---
+
+// Завантаження/Збереження стану
 let state = {};
 if (fs.existsSync(STATE_FILE)) {
     try { state = JSON.parse(fs.readFileSync(STATE_FILE)); } catch (e) { state = {}; }
 }
-
+function saveState(data) { fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2)); }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Функція для відправки фото в Telegram
 async function sendPhotoToTelegram(buffer, caption) {
     try {
         const formData = new FormData();
@@ -36,105 +39,84 @@ async function sendPhotoToTelegram(buffer, caption) {
     }
 }
 
+// Функція для відправки тексту (як запасний варіант)
+async function sendTextToTelegram(text) {
+    try {
+        await axios.post(
+            `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+            {
+                chat_id: CHAT_ID,
+                text: text,
+                parse_mode: 'Markdown'
+            }
+        );
+        console.log('✅ Текст відправлено в Telegram');
+    } catch (error) {
+        console.error('❌ Помилка відправки тексту в Telegram:', error.response ? error.response.data : error.message);
+    }
+}
+
+// --- ОСНОВНА ЛОГІКА ---
+
 async function check() {
     try {
-        console.log('🔍 Завантаження сторінки...');
-        // Використовуємо звичайний User-Agent, як у браузера Chrome
-        const { data: html } = await axios.get(URL_PAGE, {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-            }
+        console.log(`🔍 Перевірка API за адресою: ${API_URL}`);
+        
+        // 1. Отримуємо JSON з посиланням на графік
+        const apiResponse = await axios.get(API_URL, {
+             headers: { 
+                'User-Agent': 'Mozilla/5.0 (compatible; LOEMonitorBot/1.0)',
+             }
         });
+        const apiData = apiResponse.data;
         
-        console.log(`📄 Отримано HTML довжиною: ${html.length} символів`);
+        const apiContentString = typeof apiData === 'object' ? JSON.stringify(apiData) : apiData;
 
-        const $ = cheerio.load(html);
-        
-        // СТРАТЕГІЯ 2: Шукаємо ВСІ картинки, а потім фільтруємо
-        // У твоєму прикладі картинки мають "GPV" в посиланні або "grafic" в alt
-        let images = $('img').toArray();
-        
-        console.log(`🖼 Знайдено всього картинок на сторінці: ${images.length}`);
-
-        // Фільтруємо ті, що схожі на графік
-        const scheduleImages = images.filter(img => {
-            const src = $(img).attr('src') || '';
-            const alt = ($(img).attr('alt') || '').toLowerCase();
-            
-            // Умови пошуку:
-            // 1. src містить "GPV" (видно з твого прикладу)
-            // 2. alt містить "grafic"
-            // 3. або просто це велика картинка png/jpg всередині посилання
-            return src.includes('GPV') || alt.includes('grafic') || (src.includes('media') && src.endsWith('.png'));
-        });
-
-        if (scheduleImages.length === 0) {
-            console.log('⚠️ Картинки графіку не відфільтровано. Виводжу перші 3 знайдені src для налагодження:');
-            images.slice(0, 3).forEach(img => console.log('   ->', $(img).attr('src')));
-            
-            // Спробуємо "План Б": якщо верстка змінилась кардинально, шукаємо просто першу велику картинку в контенті
-            // (можна розкоментувати, якщо попереднє не спрацює)
-            return; 
+        if (apiContentString.length < 50) { 
+             await sendTextToTelegram('⚠️ Отримано занадто коротку відповідь API. Можливо, сайт недоступний.');
+             return;
         }
-
-        console.log(`🎯 Відібрано цільових картинок: ${scheduleImages.length}`);
-
-        let hasChanges = false;
-
-        for (const img of scheduleImages) {
-            let src = $(img).attr('src');
-            // Очистка src (іноді бувають пробіли)
-            src = src.trim();
+        
+        // 2. Хешуємо вміст API (коли JSON зміниться, хеш зміниться)
+        const currentApiHash = crypto.createHash('md5').update(apiContentString).digest('hex');
+        
+        // 3. Порівнюємо з попереднім хешем
+        if (state.apiHash !== currentApiHash) {
+            console.log('🚨 Виявлено зміни у відповіді API!');
             
-            // Якщо посилання відносне (/media/...), робимо абсолютним
-            if (!src.startsWith('http')) {
-                // В твоєму прикладі src повний, але про всяк випадок:
-                // Якщо src починається з /, додаємо домен api або сайту. 
-                // В прикладі: https://api.loe.lviv.ua/media/...
-                if (src.startsWith('/')) {
-                     src = `https://poweron.loe.lviv.ua${src}`;
-                }
+            // 4. Шукаємо URL картинки (як правило, це буде посилання на .png)
+            // Ми використаємо регулярний вираз для пошуку будь-якого https-посилання, що містить GPV
+            const imageMatch = apiContentString.match(/(https?:\/\/[^\s"]*?GPV\.png)/);
+            const imageUrl = imageMatch ? imageMatch[1] : null;
+
+            if (imageUrl) {
+                console.log(`🖼 Знайдено нове посилання: ${imageUrl}`);
+                
+                // 5. Завантажуємо та надсилаємо нову картинку
+                const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                const imageBuffer = imageResponse.data;
+
+                let caption = `⚡️ **Новий графік відключень!**\n\n[Переглянути на сайті](${BASE_URL})`;
+                await sendPhotoToTelegram(imageBuffer, caption);
+
+            } else {
+                // Якщо посилання не знайшли, відправляємо хоча б текст API (як запасний варіант)
+                let textCaption = `⚡️ **Оновлення у графіку (текстове)**:\n\nОтримано нові дані API, але посилання на картинку не знайдено. Перевірте сайт:\n${BASE_URL}`;
+                await sendTextToTelegram(textCaption);
+                console.log('⚠️ Не вдалося витягти URL картинки, надіслано вміст API.');
             }
-
-            console.log(`📥 Перевірка картинки: ${src}`);
-
-            try {
-                const imgResp = await axios.get(src, { responseType: 'arraybuffer' });
-                const imgBuffer = imgResp.data;
-                const hash = crypto.createHash('md5').update(imgBuffer).digest('hex');
-                const key = src; // Використовуємо URL як унікальний ключ
-
-                // Перевіряємо, чи змінився хеш
-                if (state[key] !== hash) {
-                    console.log(`🚨 Зміна виявлена! (Hash: ${hash})`);
-                    
-                    // Спробуємо знайти дату поруч з картинкою для підпису
-                    // Піднімаємось до батьківського <a>, потім беремо наступний div з текстом
-                    let caption = `⚡️ Оновлення графіку!\n\n🔗 ${URL_PAGE}`;
-                    
-                    await sendPhotoToTelegram(imgBuffer, caption);
-                    
-                    state[key] = hash;
-                    hasChanges = true;
-                    await sleep(3000); // Пауза, щоб телеграм не заблокував за спам
-                } else {
-                    console.log('   -> Без змін');
-                }
-            } catch (err) {
-                console.error(`❌ Не вдалося завантажити картинку ${src}: ${err.message}`);
-            }
-        }
-
-        if (hasChanges) {
-            fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-            console.log('💾 Стан збережено.');
+            
+            // 6. Зберігаємо новий хеш API
+            state.apiHash = currentApiHash;
+            saveState(state);
         } else {
-            console.log('😴 Нових графіків немає.');
+            console.log('😴 Змін у графіку немає.');
         }
 
     } catch (e) {
-        console.error('❌ Критична помилка:', e.message);
+        console.error(`❌ Критична помилка під час перевірки API ${API_URL}:`, e.message);
+        // Надсилаємо сповіщення про помилку, щоб знати, що монітор не працює
+        await sendTextToTelegram(`🔴 **Помилка моніторингу LOE:** Скрипт не зміг перевірити графік. Деталі: ${e.message.substring(0, 150)}`);
         process.exit(1);
     }
 }
