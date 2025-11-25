@@ -21,7 +21,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install axios cheerio
+        run: npm install
 
       - name: Run Monitor Script
         env:
