@@ -34,8 +34,14 @@ jobs:
           git config --global user.name 'LOE Bot'
           git config --global user.email 'bot@noreply.github.com'
           
-          # Перевіряємо, чи є зміни в git статус
-          git add state.json || echo "state.json not found, skipping add"
+          # Додаємо state.json ТА package-lock.json (якщо змінений кроком npm install)
+          git add state.json package-lock.json || echo "No files to add"
           
-          # Якщо є що комітити - комітимо, якщо ні - виходимо без помилки
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update schedule state" && git push)
+          # Комітимо лише, якщо є зміни, які були додані (state.json або package-lock.json)
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update schedule state"
+            git push
+            echo "Changes committed and pushed."
+          fi
