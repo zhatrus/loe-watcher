@@ -24,13 +24,14 @@ if (fs.existsSync(STATE_FILE)) {
 function saveState(data) { fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2)); }
 
 // Функція для відправки фото в Telegram
-async function sendPhotoToTelegram(buffer, caption) {
+async function sendPhotoToTelegram(buffer, caption, silent = false) {
     try {
         // Axios не завжди добре працює з Buffer для multipart/form-data, тому використовуємо form-data
         const formData = new FormData();
         formData.append('photo', Buffer.from(buffer), { filename: 'schedule.jpg', contentType: 'image/jpeg' });
         formData.append('caption', caption);
         formData.append('parse_mode', 'Markdown');
+        formData.append('disable_notification', silent ? 'true' : 'false');
         
         await axios.post(
             `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto?chat_id=${CHAT_ID}`,
@@ -44,14 +45,15 @@ async function sendPhotoToTelegram(buffer, caption) {
 }
 
 // Функція для відправки тексту
-async function sendTextToTelegram(text) {
+async function sendTextToTelegram(text, silent = false) {
     try {
         await axios.post(
             `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
             {
                 chat_id: CHAT_ID,
                 text: text,
-                parse_mode: 'Markdown'
+                parse_mode: 'Markdown',
+                disable_notification: silent,
             }
         );
         console.log('✅ Текст відправлено в Telegram');
@@ -60,11 +62,25 @@ async function sendTextToTelegram(text) {
     }
 }
 
+// Визначення, чи зараз "тихий" період (21:00–08:00 за київським часом)
+function isQuietTime() {
+    const now = new Date();
+    const hourKyiv = Number(
+        now.toLocaleString('en-US', {
+            timeZone: 'Europe/Kyiv',
+            hour: 'numeric',
+            hour12: false,
+        })
+    );
+    return hourKyiv >= 21 || hourKyiv < 8;
+}
+
 // --- ОСНОВНА ЛОГІКА ---
 
 async function check() {
     try {
         console.log(`🔍 Перевірка API за адресою: ${API_URL}`);
+        const quiet = isQuietTime();
         
         // 1. Отримуємо JSON з посиланням на графік
         const apiResponse = await axios.get(API_URL, {
@@ -78,7 +94,7 @@ async function check() {
         const apiContentString = JSON.stringify(apiData);
 
         if (apiContentString.length < 50) { 
-             await sendTextToTelegram('⚠️ Отримано занадто коротку відповідь API. Можливо, сайт недоступний.');
+             await sendTextToTelegram('⚠️ Отримано занадто коротку відповідь API. Можливо, сайт недоступний.', quiet);
              return;
         }
         
@@ -125,12 +141,12 @@ async function check() {
                 
                 // Формуємо підпис: заголовок + очищений текст
                 let caption = `⚡️ **Новий графік відключень!**\n\n${scheduleText}\n\n[Переглянути на сайті](${BASE_URL})`;
-                await sendPhotoToTelegram(imageBuffer, caption);
+                await sendPhotoToTelegram(imageBuffer, caption, quiet);
 
             } else {
                 // Якщо посилання не знайшли (наприклад, у випадку скасування відключень, коли imageUrl порожнє)
                 let textCaption = `⚠️ **Оновлення (Тільки Текст)**:\n\n${scheduleText || 'Інформація про графік відсутня (можливо, ГПВ скасовано).'} \n\n[Перевірити на сайті](${BASE_URL})`;
-                await sendTextToTelegram(textCaption);
+                await sendTextToTelegram(textCaption, quiet);
                 console.log('⚠️ Посилання на картинку не знайдено, надіслано текстовий вміст.');
             }
             
@@ -143,8 +159,9 @@ async function check() {
 
     } catch (e) {
         console.error(`❌ Критична помилка під час перевірки API ${API_URL}:`, e.message);
-        // Надсилаємо сповіщення про помилку
-        await sendTextToTelegram(`🔴 **Помилка моніторингу LOE:** Скрипт не зміг перевірити графік. Деталі: ${e.message.substring(0, 150)}`);
+        // Надсилаємо сповіщення про помилку (також з урахуванням тихого режиму)
+        const quiet = isQuietTime();
+        await sendTextToTelegram(`🔴 **Помилка моніторингу LOE:** Скрипт не зміг перевірити графік. Деталі: ${e.message.substring(0, 150)}`, quiet);
         process.exit(1);
     }
 }
