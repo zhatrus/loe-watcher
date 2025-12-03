@@ -75,6 +75,21 @@ function isQuietTime() {
     return hourKyiv >= 21 || hourKyiv < 8;
 }
 
+// Отримати дату за київським часом у форматі DD.MM.YYYY (із зсувом у днях)
+function getKyivDateString(offsetDays = 0) {
+    const now = new Date();
+    const kyivNow = new Date(
+        now.toLocaleString('en-US', {
+            timeZone: 'Europe/Kyiv',
+        })
+    );
+    kyivNow.setDate(kyivNow.getDate() + offsetDays);
+    const dd = String(kyivNow.getDate()).padStart(2, '0');
+    const mm = String(kyivNow.getMonth() + 1).padStart(2, '0');
+    const yyyy = kyivNow.getFullYear();
+    return `${dd}.${mm}.${yyyy}`;
+}
+
 // --- ОСНОВНА ЛОГІКА ---
 
 async function check() {
@@ -139,8 +154,23 @@ async function check() {
                 const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
                 const imageBuffer = imageResponse.data;
                 
-                // Формуємо підпис: заголовок + очищений текст
-                let caption = `⚡️ **Новий графік відключень!**\n\n${scheduleText}\n\n[Переглянути на сайті](${BASE_URL})`;
+                // Формуємо підпис: заголовок залежить від дати в тексті + очищений текст
+                const firstLine = (scheduleText.split('\n')[0] || '').trim();
+                const dateMatch = firstLine.match(/(\d{2}\.\d{2}\.\d{4})/);
+                const todayStr = getKyivDateString(0);
+                const tomorrowStr = getKyivDateString(1);
+
+                let title = '⚡️ **Новий графік відключень!**';
+                if (dateMatch) {
+                    const dateStr = dateMatch[1];
+                    if (dateStr === todayStr) {
+                        title = '⚡️ **Оновлення в графіку відключень!**';
+                    } else if (dateStr === tomorrowStr) {
+                        title = '⚡️ **Новий графік відключень!**';
+                    }
+                }
+
+                let caption = `${title}\n\n${scheduleText}\n\n[Переглянути на сайті](${BASE_URL})`;
                 await sendPhotoToTelegram(imageBuffer, caption, quiet);
 
             } else {
