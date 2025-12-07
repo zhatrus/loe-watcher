@@ -170,17 +170,24 @@ async function check() {
                     }
                 }
 
-                // Надсилаємо фото з коротким заголовком (без звуку) і повний текст окремим повідомленням
-                const captionPhoto = title;
+                // Розбиваємо текст на абзаци: перші два йдуть у підпис до фото, решта — в окреме текстове повідомлення
+                const lines = scheduleText.split('\n');
+                const introLines = lines.slice(0, 2).join('\n');
+                const restLines = lines.slice(2).join('\n').trim();
+
+                // Підпис до фото: заголовок + перші два абзаци, завжди без звуку
+                const captionPhoto = `${title}\n\n${introLines}`.trim();
                 await sendPhotoToTelegram(imageBuffer, captionPhoto, true);
 
-                // Текстове повідомлення можемо робити довшим (Telegram ~4096 символів), але залишимо невеликий запас
-                const MAX_MESSAGE_LENGTH = 4000;
-                let fullText = `${title}\n\n${scheduleText}\n\n[Переглянути на сайті](${BASE_URL})`;
-                if (fullText.length > MAX_MESSAGE_LENGTH) {
-                    fullText = fullText.slice(0, MAX_MESSAGE_LENGTH - 1) + '…';
+                // Текстове повідомлення: лише решта тексту без заголовку та без перших двох абзаців
+                if (restLines) {
+                    const MAX_MESSAGE_LENGTH = 4000; // невеликий запас до ліміту Telegram
+                    let textBody = `${restLines}\n\n[Переглянути на сайті](${BASE_URL})`;
+                    if (textBody.length > MAX_MESSAGE_LENGTH) {
+                        textBody = textBody.slice(0, MAX_MESSAGE_LENGTH - 1) + '…';
+                    }
+                    await sendTextToTelegram(textBody, quiet);
                 }
-                await sendTextToTelegram(fullText, quiet);
 
             } else {
                 // Якщо посилання не знайшли (наприклад, у випадку скасування відключень, коли imageUrl порожнє)
