@@ -170,7 +170,14 @@ async function check() {
                     }
                 }
 
-                let caption = `${title}\n\n${scheduleText}\n\n[Переглянути на сайті](${BASE_URL})`;
+                // Telegram обмежує довжину підпису до 1024 символів, тому обрізаємо текст із запасом
+                const MAX_CAPTION_LENGTH = 900;
+                let truncatedScheduleText = scheduleText;
+                if (truncatedScheduleText.length > MAX_CAPTION_LENGTH) {
+                    truncatedScheduleText = truncatedScheduleText.slice(0, MAX_CAPTION_LENGTH - 1) + '…';
+                }
+
+                let caption = `${title}\n\n${truncatedScheduleText}\n\n[Переглянути на сайті](${BASE_URL})`;
                 await sendPhotoToTelegram(imageBuffer, caption, quiet);
 
             } else {
