@@ -2,7 +2,7 @@ name: Monitor LOE Schedule
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Запускати кожні 30 хвилин
+    - cron: '10,40 * * * *' # Запускати о :10 та :40 хвилинах кожної години
   workflow_dispatch: # Кнопка для ручного запуску
 
 jobs:
